@@ -10,7 +10,7 @@ on:
 
 env:
   REPO_URL: https://github.com/immortalwrt/immortalwrt
-  REPO_BRANCH: openwrt-23.05  # 修改为实际存在的分支
+  REPO_BRANCH: openwrt-23.05
   CONFIG_FILE: config/synology_918+.config
   DIY_P1_SH: diy-part1.sh
   DIY_P2_SH: diy-part2.sh
@@ -70,58 +70,58 @@ jobs:
       run: |
         echo -e "$(nproc) thread compile"
         make -j$(nproc) || make -j1 V=s
-        echo "::set-output name=status::success"
+        echo "STATUS=success" >> $GITHUB_ENV  # 替换 set-output
 
     - name: Upload bin directory
       uses: actions/upload-artifact@v4
-      if: env.UPLOAD_BIN_DIR == 'true' && steps.compile.outputs.status == 'success'
+      if: env.UPLOAD_BIN_DIR == 'true' && env.STATUS == 'success'
       with:
         name: OpenWrt_bin
         path: /workdir/openwrt/bin
 
     - name: Organize files
-      id: organize
-      if: env.UPLOAD_FIRMWARE == 'true' && steps.compile.outputs.status == 'success'
       working-directory: /workdir/openwrt/bin/targets/*/*
       run: |
         mkdir firmware
         cp -r *img* *bin* *config* *manifest* *packages* *sha256sums* firmware/
         echo "FIRMWARE_PATH=$(pwd)/firmware" >> $GITHUB_ENV
-        echo "::set-output name=status::success"
+        echo "STATUS=success" >> $GITHUB_ENV  # 替换 set-output
+      id: organize
 
     - name: Upload firmware directory
       uses: actions/upload-artifact@v4
-      if: env.UPLOAD_FIRMWARE == 'true' && steps.organize.outputs.status == 'success'
+      if: env.UPLOAD_FIRMWARE == 'true' && env.STATUS == 'success'
       with:
         name: OpenWrt_Firmware
         path: ${{ env.FIRMWARE_PATH }}
 
     - name: Generate release tag
-      id: tag
-      if: env.UPLOAD_RELEASE == 'true' && steps.organize.outputs.status == 'success'
       run: |
-        echo "TAG=OpenWrt_$(date +%Y%m%d)_$(git -C /workdir/openwrt rev-parse --short HEAD)" >> $GITHUB_ENV
-        echo "::set-output name=tag_name::$TAG"
+        TAG=OpenWrt_$(date +%Y%m%d)_$(git -C /workdir/openwrt rev-parse --short HEAD)
+        echo "TAG=$TAG" >> $GITHUB_ENV
+        echo "RELEASE_TAG=$TAG" >> $GITHUB_ENV  # 定义环境变量
+      id: tag
+      if: env.UPLOAD_RELEASE == 'true' && env.STATUS == 'success'
 
     - name: Create release
-      id: create_release
       uses: actions/create-release@v1
-      if: env.UPLOAD_RELEASE == 'true' && steps.organize.outputs.status == 'success'
+      if: env.UPLOAD_RELEASE == 'true' && env.STATUS == 'success'
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
-        tag_name: ${{ env.TAG }}
-        release_name: Build ${{ env.TAG }}
+        tag_name: ${{ env.RELEASE_TAG }}
+        release_name: Build ${{ env.RELEASE_TAG }}
         draft: false
         prerelease: false
+      id: create_release
 
     - name: Upload release assets
       uses: actions/upload-release-asset@v1
-      if: env.UPLOAD_RELEASE == 'true' && steps.organize.outputs.status == 'success'
+      if: env.UPLOAD_RELEASE == 'true' && env.STATUS == 'success'
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
         upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: ${{ env.FIRMWARE_PATH }}/${{ env.TAG }}_firmware.zip
-        asset_name: ${{ env.TAG }}_firmware.zip
+        asset_path: ${{ env.FIRMWARE_PATH }}/${{ env.RELEASE_TAG }}_firmware.zip
+        asset_name: ${{ env.RELEASE_TAG }}_firmware.zip
         asset_content_type: application/zip
