@@ -1,0 +1,127 @@
+name: Build OpenWrt for Synology 918+
+
+on:
+  workflow_dispatch:
+    inputs:
+      ssh:
+        description: 'Enable SSH connection (yes/no)'
+        required: false
+        default: 'no'
+
+env:
+  REPO_URL: https://github.com/immortalwrt/immortalwrt
+  REPO_BRANCH: openwrt-24.05
+  CONFIG_FILE: config/synology_918+.config
+  DIY_P1_SH: diy-part1.sh
+  DIY_P2_SH: diy-part2.sh
+  UPLOAD_BIN_DIR: false
+  UPLOAD_FIRMWARE: true
+  UPLOAD_RELEASE: true
+  TZ: Asia/Shanghai
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Initialization environment
+      env:
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc
+        sudo apt-get update
+        sudo apt-get -y install build-essential asciidoc binutils bzip2 gawk gettext git libncurses5-dev libz-dev patch python3 python2.7 unzip zlib1g-dev lib32gcc1 libc6-dev-i386 subversion flex uglifyjs git-core gcc-multilib p7zip p7zip-full msmtp libssl-dev texinfo libglib2.0-dev xmlto qemu-utils upx libelf-dev autoconf automake libtool autopoint device-tree-compiler g++-multilib antlr3 gperf wget curl swig rsync
+        sudo apt-get -y autoremove --purge
+        sudo apt-get clean
+        sudo timedatectl set-timezone "$TZ"
+        sudo mkdir -p /workdir
+        sudo chown $USER:$USER /workdir
+
+    - name: Clone source code
+      working-directory: /workdir
+      run: |
+        df -hT $PWD
+        git clone $REPO_URL -b $REPO_BRANCH openwrt
+        cd openwrt
+        ./scripts/feeds update -a
+        ./scripts/feeds install -a
+
+    - name: Load custom configuration
+      working-directory: /workdir/openwrt
+      run: |
+        [ -e files ] && mv files files.bak
+        [ -f "$CONFIG_FILE" ] && cp "$CONFIG_FILE" .config
+        chmod +x $GITHUB_WORKSPACE/$DIY_P1_SH
+        $GITHUB_WORKSPACE/$DIY_P1_SH
+        make defconfig
+
+    - name: Download package
+      working-directory: /workdir/openwrt
+      run: |
+        make download -j$(nproc)
+        find dl -size -1024c -exec ls -l {} \;
+        find dl -size -1024c -exec rm -f {} \;
+
+    - name: Compile the firmware
+      working-directory: /workdir/openwrt
+      run: |
+        echo -e "$(nproc) thread compile"
+        make -j$(nproc) || make -j1 V=s
+        echo "::set-output name=status::success"
+
+    - name: Upload bin directory
+      uses: actions/upload-artifact@v4
+      if: env.UPLOAD_BIN_DIR == 'true' && steps.compile.outputs.status == 'success'
+      with:
+        name: OpenWrt_bin
+        path: /workdir/openwrt/bin
+
+    - name: Organize files
+      id: organize
+      if: env.UPLOAD_FIRMWARE == 'true' && steps.compile.outputs.status == 'success'
+      working-directory: /workdir/openwrt/bin/targets/*/*
+      run: |
+        mkdir firmware
+        cp -r *img* *bin* *config* *manifest* *packages* *sha256sums* firmware/
+        echo "FIRMWARE_PATH=$(pwd)/firmware" >> $GITHUB_ENV
+        echo "::set-output name=status::success"
+
+    - name: Upload firmware directory
+      uses: actions/upload-artifact@v4
+      if: env.UPLOAD_FIRMWARE == 'true' && steps.organize.outputs.status == 'success'
+      with:
+        name: OpenWrt_Firmware
+        path: ${{ env.FIRMWARE_PATH }}
+
+    - name: Generate release tag
+      id: tag
+      if: env.UPLOAD_RELEASE == 'true' && steps.organize.outputs.status == 'success'
+      run: |
+        echo "TAG=OpenWrt_$(date +%Y%m%d)_$(git -C /workdir/openwrt rev-parse --short HEAD)" >> $GITHUB_ENV
+        echo "::set-output name=tag_name::$TAG"
+
+    - name: Create release
+      id: create_release
+      uses: actions/create-release@v1
+      if: env.UPLOAD_RELEASE == 'true' && steps.organize.outputs.status == 'success'
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ env.TAG }}
+        release_name: Build ${{ env.TAG }}
+        draft: false
+        prerelease: false
+
+    - name: Upload release assets
+      uses: actions/upload-release-asset@v1
+      if: env.UPLOAD_RELEASE == 'true' && steps.organize.outputs.status == 'success'
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ${{ env.FIRMWARE_PATH }}/${{ env.TAG }}_firmware.zip
+        asset_name: ${{ env.TAG }}_firmware.zip
+        asset_content_type: application/zip
