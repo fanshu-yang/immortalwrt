@@ -70,7 +70,7 @@ jobs:
       run: |
         echo -e "$(nproc) thread compile"
         make -j$(nproc) || make -j1 V=s
-        echo "STATUS=success" >> $GITHUB_ENV  # 替换 set-output
+        echo "STATUS=success" >> $GITHUB_ENV
 
     - name: Upload bin directory
       uses: actions/upload-artifact@v4
@@ -80,13 +80,20 @@ jobs:
         path: /workdir/openwrt/bin
 
     - name: Organize files
-      working-directory: /workdir/openwrt/bin/targets/*/*
+      working-directory: /workdir/openwrt/bin
       run: |
+        TARGET_DIR=$(find targets -type d | head -n 1)
+        if [ -z "$TARGET_DIR" ]; then
+          echo "错误：未找到目标架构目录"
+          exit 1
+        fi
+        cd $TARGET_DIR
         mkdir firmware
         cp -r *img* *bin* *config* *manifest* *packages* *sha256sums* firmware/
         echo "FIRMWARE_PATH=$(pwd)/firmware" >> $GITHUB_ENV
-        echo "STATUS=success" >> $GITHUB_ENV  # 替换 set-output
+        echo "STATUS=success" >> $GITHUB_ENV
       id: organize
+      if: env.UPLOAD_FIRMWARE == 'true' && env.STATUS == 'success'
 
     - name: Upload firmware directory
       uses: actions/upload-artifact@v4
@@ -99,7 +106,7 @@ jobs:
       run: |
         TAG=OpenWrt_$(date +%Y%m%d)_$(git -C /workdir/openwrt rev-parse --short HEAD)
         echo "TAG=$TAG" >> $GITHUB_ENV
-        echo "RELEASE_TAG=$TAG" >> $GITHUB_ENV  # 定义环境变量
+        echo "RELEASE_TAG=$TAG" >> $GITHUB_ENV
       id: tag
       if: env.UPLOAD_RELEASE == 'true' && env.STATUS == 'success'
 
