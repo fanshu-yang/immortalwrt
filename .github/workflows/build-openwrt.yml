@@ -14,7 +14,7 @@ env:
   CONFIG_FILE: config/synology_918+.config
   DIY_P1_SH: diy-part1.sh
   DIY_P2_SH: diy-part2.sh
-  UPLOAD_BIN_DIR: false
+  UPLOAD_BIN_DIR: true
   UPLOAD_FIRMWARE: true
   UPLOAD_RELEASE: true
   TZ: Asia/Shanghai
@@ -71,6 +71,13 @@ jobs:
         echo -e "$(nproc) thread compile"
         make -j$(nproc) || make -j1 V=s
         echo "STATUS=success" >> $GITHUB_ENV
+    
+    - name: Check compile status
+      run: |
+        if [ -z "${{ env.STATUS }}" ] || [ "${{ env.STATUS }}" != "success" ]; then
+          echo "编译失败，STATUS 未正确设置"
+          exit 1
+          fi
 
     - name: Upload bin directory
       uses: actions/upload-artifact@v4
@@ -78,6 +85,11 @@ jobs:
       with:
         name: OpenWrt_bin
         path: /workdir/openwrt/bin
+
+    - name: Debug directory
+      run: |
+        ls -la /workdir/openwrt/bin/targets/  # 查看目标目录结构
+        echo "FIRMWARE_PATH 预期路径: ${{ env.FIRMWARE_PATH }}"
 
     - name: Organize files
       working-directory: /workdir/openwrt/bin
